@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	schedule "github.com/phoebus-84/scheduler/temporal"
 	"go.temporal.io/sdk/client"
@@ -23,7 +24,13 @@ func main() {
 
 	scheduleHandle, err := temporalClient.ScheduleClient().Create(ctx, client.ScheduleOptions{
 		ID:   scheduleID,
-		Spec: client.ScheduleSpec{},
+		Spec: client.ScheduleSpec{
+			Intervals: []client.ScheduleIntervalSpec{
+				{
+					Every: time.Hour,
+				},
+			},
+		},
 		Action: &client.ScheduleWorkflowAction{
 			ID:        workflowID,
 			Workflow:  schedule.Scheduler,

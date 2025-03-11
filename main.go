@@ -1,69 +1,100 @@
 package main
 
 import (
-	// "context"
+	"context"
+	"encoding/json"
 	"log"
-	// "net/http"
+	"net/http"
+	"time"
+
 	"os"
 
+	"github.com/phoebus-84/scheduler/temporal"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
-	// "go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/client"
 )
 
 func main() {
 	app := pocketbase.New()
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		// serves static files from the provided public dir (if exists)
 		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
-		// se.Router.GET("/api/validate-yaml", func(e *core.RequestEvent) error {
-		// 	yaml := e.Request.URL.Query().Get("yaml")
-		// 	if yaml == "" {
-		// 		return e.JSON(http.StatusBadRequest, "yaml query param is required")
-		// 	}
-		// 	email := e.Request.URL.Query().Get("email")
-		// 	if email == "" {
-		// 		return e.JSON(http.StatusBadRequest, "email query param is required")
-		// 	}
-		// 	ctx, err := client.Dial(client.Options{})
+		se.Router.GET("/api/create-schedule", func(e *core.RequestEvent) error {
+			scheduleId := e.Request.URL.Query().Get("scheduleId")
+			if scheduleId == "" {
+				return e.JSON(http.StatusBadRequest, "scheduleId is required")
 
-		// 	if err != nil {
-		// 		log.Fatalln("Unable to create Temporal client:", err)
-		// 	}
-
-		// 	defer ctx.Close()
-		// 	input := update.AppInput{
-		// 		Email: email,
-		// 		Url:   yaml,
-		// 		App: app,
-		// 	}
-		// 	options := client.StartWorkflowOptions{
-		// 		ID:        "validate-id",
-		// 		TaskQueue: update.TaskQueue,
-		// 	}
-		// 	log.Printf("Starting Workflow with ID: %s\n, input: %v", options.ID, input)
-		// 	we, err := ctx.ExecuteWorkflow(context.Background(), options, update.Validation, input)
-		// 	if err != nil {
-		// 		log.Fatalln("Unable to start the Workflow:", err)
-		// 	}
-		// 	log.Printf("WorkflowID: %s RunID: %s\n", we.GetID(), we.GetRunID())
-		// 	var result string
-		// 	err = we.Get(context.Background(), &result)
-		// 	if err != nil {
-		// 		log.Fatalln("Unable to get Workflow result:", err)
-		// 	}
-		// 	if err != nil {
-		// 		log.Fatalln("Unable to get Workflow result:", err)
-		// 	}
-		// 	log.Println(result)
-		// 	return e.JSON(http.StatusOK, &result)
-		// })
+			}
+			createSchedule(app, scheduleId)
+			return e.JSON(http.StatusOK, "Schedule created")
+		})
 		return se.Next()
 	})
 
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func createSchedule(app *pocketbase.PocketBase, scheduleID string) {
+	shedulerRecord, err := app.FindRecordById("features", "692se15r284284f")
+	if err != nil {
+		log.Fatal(err)
+	}
+	result := struct {
+		Interval string `json:"interval"`
+	}{}
+	errJson := json.Unmarshal([]byte(shedulerRecord.GetString("envVariables")), &result)
+	if errJson != nil {
+		log.Fatal(errJson)
+	}
+	var interval time.Duration
+	switch result.Interval {
+	case "every_minute":
+		interval = time.Minute
+	case "hourly":
+		interval = time.Hour
+	case "daily":
+		interval = time.Hour * 24
+	case "weekly":
+		interval = time.Hour * 24 * 7
+	case "monthly":
+		interval = time.Hour * 24 * 30
+	default:
+		interval = time.Hour
+	}
+	workflowID := "schedule_workflow_id"
+	ctx := context.Background()
+
+	temporalClient, err := client.Dial(client.Options{
+		HostPort: client.DefaultHostPort,
+	})
+	if err != nil {
+		log.Fatalln("Unable to create Temporal Client", err)
+	}
+	defer temporalClient.Close()
+
+	scheduleHandle, err := temporalClient.ScheduleClient().Create(ctx, client.ScheduleOptions{
+		ID: scheduleID,
+		Spec: client.ScheduleSpec{
+			Intervals: []client.ScheduleIntervalSpec{
+				{
+					Every: interval,
+				},
+			},
+		},
+		Action: &client.ScheduleWorkflowAction{
+			ID:        workflowID,
+			Workflow:  temporal.Scheduler,
+			TaskQueue: temporal.TaskQueue,
+		},
+	})
+
+	if err != nil {
+		log.Fatalln("Unable to create schedule", err)
+	}
+	log.Println("Schedule created", "ScheduleID", scheduleID)
+	_, _ = scheduleHandle.Describe(ctx)
 }
