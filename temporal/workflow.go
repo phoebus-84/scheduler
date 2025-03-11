@@ -33,6 +33,15 @@ func Scheduler(ctx workflow.Context) error {
 	if err != nil {
 		return err
 	}
+	childWorkflow := workflow.ExecuteChildWorkflow(ctx, MyChildWorkflow)
+    // Wait for child to start
+    _ = childWorkflow.GetChildWorkflowExecution().Get(ctx, nil)
 
+	return nil
+}
+
+func MyChildWorkflow(ctx workflow.Context) error {
+	// This workflow will be executed as a child workflow
+	// of the parent workflow Scheduler
 	return nil
 }
